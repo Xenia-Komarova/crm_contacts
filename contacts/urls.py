@@ -9,6 +9,7 @@ urlpatterns = [
     path("contacts/<int:pk>/delete/", views.contact_delete, name="contact_delete"),
     path("export/", views.export_contacts, name="export_contacts"),
     path("import/", views.import_contacts, name="import_contacts"),
+    path("import/unisender/", views.import_unisender, name="import_unisender"),
     path("unisender/sync/", views.unisender_sync, name="unisender_sync"),
     path("hooks/unisender/<str:token>/", views.unisender_webhook, name="unisender_webhook"),
 ]

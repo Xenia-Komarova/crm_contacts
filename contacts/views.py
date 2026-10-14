@@ -3,18 +3,21 @@ import gzip
 import io
 import json
 import secrets
+import zipfile
+import urllib.request
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import HttpResponse, HttpResponseForbidden, HttpResponseBadRequest, JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404, redirect, render
 from openpyxl import Workbook, load_workbook
 from .forms import ContactForm
 from .models import Contact, ContactEmail, ContactPhone, Industry, Source
-from .services import process_webhook, push_email_to_unisender
+from .services import process_webhook, push_email_to_unisender, unisender_call
 
 HEADERS = ["Фамилия", "Имя", "Отчество", "Компания", "Отрасль", "Источник", "Должность", "E-mail", "Статус e-mail", "Телефоны", "Топ-менеджмент", "GR", "Комментарий"]
 
@@ -138,14 +141,22 @@ def parse_upload(upload):
         if text is None:
             raise ValueError("Не удалось определить кодировку CSV (поддерживаются UTF-8 и Windows-1251).")
         try:
-            dialect = csv.Sniffer().sniff(text[:4096], delimiters=";,\t,")
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=";,\t")
         except csv.Error:
+            header = text.splitlines()[0] if text.splitlines() else ""
+            delimiter = max((";", ",", "\t"), key=header.count)
             dialect = csv.excel
+            dialect.delimiter = delimiter
         values = list(csv.reader(io.StringIO(text), dialect))
     if not values:
         return []
     headers = [str(x or "").strip().lower() for x in values[0]]
     aliases = {"фамилия":"surname", "surname":"surname", "имя":"first_name", "first name":"first_name", "first_name":"first_name", "отчество":"patronymic", "patronymic":"patronymic", "компания":"company", "company":"company", "отрасль":"industry", "industry":"industry", "источник":"source", "source":"source", "должность":"position", "position":"position", "e-mail":"emails", "email":"emails", "e-mail адрес":"emails", "emails":"emails", "телефон":"phones", "телефоны":"phones", "phone":"phones", "phones":"phones", "топ-менеджмент":"top", "top management":"top", "top_management":"top", "gr":"gr", "направление gr":"gr", "комментарий":"comments", "comments":"comments"}
+    aliases.update({"email_status": "email_status", "contact_status": "contact_status", "tags": "tags", "id": "unisender_id"})
+    aliases[settings.UNISENDER_FIELD_FIRST_NAME.strip().lower()] = "first_name"
+    aliases[settings.UNISENDER_FIELD_LAST_NAME.strip().lower()] = "surname"
+    aliases[settings.UNISENDER_FIELD_COMPANY.strip().lower()] = "company"
+    aliases[settings.UNISENDER_FIELD_POSITION.strip().lower()] = "position"
     mapping = [aliases.get(h, "") for h in headers]
     rows = []
     for number, raw_row in enumerate(values[1:], 2):
@@ -159,6 +170,9 @@ def parse_upload(upload):
         item["phones"] = [x.strip() for x in item.get("phones", "").replace("\n", ";").split(";") if x.strip()]
         item["top"] = item.get("top", "").lower() in ("да", "yes", "1", "true", "x")
         item["gr"] = item.get("gr", "").lower() in ("да", "yes", "1", "true", "x")
+        item["email_status"] = item.get("email_status", "").lower()
+        item["contact_status"] = item.get("contact_status", "").lower()
+        item["tags"] = item.get("tags", "")
         rows.append(item)
     return rows
 
@@ -166,6 +180,7 @@ def parse_upload(upload):
 def import_contacts(request):
     if request.method == "POST" and request.POST.get("action") == "commit":
         rows = request.session.pop("import_rows", [])
+        import_source = request.session.pop("import_source", "file")
         mode = request.POST.get("mode", "skip")
         created = updated = skipped = 0
         for item in rows:
@@ -180,10 +195,20 @@ def import_contacts(request):
                 continue
             contact = existing or Contact()
             for key in ("surname", "first_name", "patronymic", "company", "position", "comments"):
-                if key in item:
+                if key in item and item[key]:
                     setattr(contact, key, item[key])
-            contact.top_management = item.get("top", False)
-            contact.gr = item.get("gr", False)
+            if import_source == "unisender":
+                if item.get("tags"):
+                    tags = {tag.strip().lower() for tag in item["tags"].replace(",", ";").split(";")}
+                    contact.top_management = contact.top_management or bool(tags & {"топ-менеджмент", "top management", "top_management"})
+                    contact.gr = contact.gr or "gr" in tags
+            else:
+                contact.top_management = item.get("top", False)
+                contact.gr = item.get("gr", False)
+            if item.get("tags") and import_source != "unisender":
+                tags = {tag.strip().lower() for tag in item["tags"].replace(",", ";").split(";")}
+                contact.top_management = contact.top_management or bool(tags & {"топ-менеджмент", "top management", "top_management"})
+                contact.gr = contact.gr or "gr" in tags
             if item.get("industry"):
                 industry, _ = Industry.objects.get_or_create(name=item["industry"])
                 contact.industry = industry
@@ -199,9 +224,28 @@ def import_contacts(request):
                 owner = ContactEmail.objects.filter(address__iexact=address).first()
                 if owner and owner.contact_id != contact.pk:
                     continue
+                status = item.get("email_status", "")
+                status_map = {"new": ContactEmail.Status.PENDING, "invited": ContactEmail.Status.PENDING,
+                              "active": ContactEmail.Status.ACTIVE, "unsubscribed": ContactEmail.Status.UNSUBSCRIBED,
+                              "blocked": ContactEmail.Status.BLOCKED, "inactive": ContactEmail.Status.DISABLED,
+                              "disabled": ContactEmail.Status.DISABLED}
+                if item.get("contact_status") == "disabled":
+                    status = "disabled"
                 email_obj, created_email = ContactEmail.objects.get_or_create(address=address, defaults={"contact": contact})
+                if status in status_map:
+                    email_obj.mailing_status = status_map[status]
+                if import_source == "unisender":
+                    email_obj.synced_at = timezone.now()
+                    email_obj.unisender_person_id = item.get("unisender_id", "") or email_obj.unisender_person_id
+                    email_obj.save(update_fields=["mailing_status", "synced_at", "unisender_person_id"])
+                elif status in status_map:
+                    email_obj.save(update_fields=["mailing_status"])
                 if created_email:
-                    transaction.on_commit(lambda e=email_obj: push_email_to_unisender(e))
+                    if import_source == "unisender":
+                        email_obj.synced_at = timezone.now()
+                        email_obj.save(update_fields=["synced_at"])
+                    else:
+                        transaction.on_commit(lambda e=email_obj: push_email_to_unisender(e))
             for number in item.get("phones", []):
                 ContactPhone.objects.get_or_create(contact=contact, number=number)
         messages.success(request, f"Импорт завершён: создано {created}, обновлено {updated}, пропущено {skipped}.")
@@ -214,10 +258,74 @@ def import_contacts(request):
                 item["conflict"] = len(existing) > 1
                 item["matched"] = str(existing[0]) if len(existing) == 1 else ""
             request.session["import_rows"] = rows
+            request.session["import_source"] = "file"
             return render(request, "contacts/import_preview.html", {"rows": rows, "count": len(rows)})
         except Exception as exc:
             messages.error(request, f"Не удалось прочитать файл: {exc}")
     return render(request, "contacts/import.html")
+
+@login_required
+def import_unisender(request):
+    if not settings.UNISENDER_API_KEY:
+        messages.error(request, "Сначала задайте UNISENDER_API_KEY в файле .env.")
+        return redirect("import_contacts")
+    if request.method != "POST":
+        return render(request, "contacts/unisender_import.html", {"task_uuid": request.session.get("unisender_export_task")})
+    action = request.POST.get("action")
+    try:
+        if action == "start":
+            fields = ["email", "email_status", "contact_status", "phone", "tags",
+                      settings.UNISENDER_FIELD_FIRST_NAME, settings.UNISENDER_FIELD_LAST_NAME,
+                      settings.UNISENDER_FIELD_COMPANY, settings.UNISENDER_FIELD_POSITION]
+            params = {"field_names[]": list(dict.fromkeys(fields))}
+            if settings.UNISENDER_LIST_ID:
+                params["list_id"] = settings.UNISENDER_LIST_ID
+            result = unisender_call("async/exportContacts", params)
+            task_uuid = result.get("task_uuid")
+            if not task_uuid:
+                raise ValueError("UniSender не вернул номер задания на выгрузку.")
+            request.session["unisender_export_task"] = str(task_uuid)
+            messages.info(request, "UniSender готовит выгрузку. Нажмите «Проверить готовность» через некоторое время.")
+        elif action == "check":
+            task_uuid = request.session.get("unisender_export_task")
+            if not task_uuid:
+                messages.error(request, "Сначала запросите выгрузку из UniSender.")
+                return redirect("import_unisender")
+            result = unisender_call("async/getTaskResult", {"task_uuid": task_uuid})
+            if result.get("status") != "completed" or not result.get("file_to_download"):
+                messages.info(request, f"Выгрузка пока не готова (статус: {result.get('status', 'неизвестен')}). Попробуйте проверить позже.")
+                return redirect("import_unisender")
+            download_url = result["file_to_download"]
+            if not download_url.startswith("https://"):
+                raise ValueError("UniSender вернул небезопасную ссылку на файл.")
+            req = urllib.request.Request(download_url, headers={"User-Agent": "ContactsCRM/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                content = response.read(25 * 1024 * 1024 + 1)
+            if len(content) > 25 * 1024 * 1024:
+                raise ValueError("Файл выгрузки превышает 25 МБ; выгрузите нужный список отдельно.")
+            if content.startswith(b"\x1f\x8b"):
+                content = gzip.decompress(content)
+            elif content.startswith(b"PK\x03\x04"):
+                with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                    csv_files = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+                    if not csv_files:
+                        raise ValueError("В архиве UniSender не найден CSV-файл.")
+                    content = archive.read(csv_files[0])
+            upload = type("MemoryUpload", (), {"name": "unisender.csv", "read": lambda self: content})()
+            rows = parse_upload(upload)
+            for item in rows:
+                existing = list(Contact.objects.filter(emails__address__in=item.get("emails", [])).distinct())
+                item["conflict"] = len(existing) > 1
+                item["matched"] = str(existing[0]) if len(existing) == 1 else ""
+            request.session["import_rows"] = rows
+            request.session["import_source"] = "unisender"
+            request.session.pop("unisender_export_task", None)
+            return render(request, "contacts/import_preview.html", {"rows": rows, "count": len(rows), "source_label": "UniSender"})
+        else:
+            raise ValueError("Неизвестное действие импорта.")
+    except Exception as exc:
+        messages.error(request, f"Не удалось получить данные из UniSender: {exc}")
+    return redirect("import_unisender")
 
 @login_required
 def unisender_sync(request):

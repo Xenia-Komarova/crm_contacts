@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}Импорт из UniSender{% endblock %}{% block content %}
+<div class="page-head"><div><h1>Импорт из UniSender</h1><div class="muted">Выгрузка загружается в CRM после предварительного просмотра.</div></div><a class="btn secondary" href="{% url 'import_contacts' %}">Назад к импорту</a></div>
+<section class="card"><p>Для подключения укажите <code>UNISENDER_API_KEY</code> в файле .env. Если заполнен <code>UNISENDER_LIST_ID</code>, будет выгружен этот список; если он пустой — все списки аккаунта. Выгрузка может готовиться некоторое время.</p>
+<form method="post" class="actions">{% csrf_token %}<input type="hidden" name="action" value="start"><button class="btn">Запросить новую выгрузку</button></form>
+{% if task_uuid %}<hr style="border:0;border-top:1px solid var(--line);margin:20px 0"><p>Задание <code>{{ task_uuid }}</code> ожидает проверки.</p><form method="post" class="actions">{% csrf_token %}<input type="hidden" name="action" value="check"><button class="btn secondary">Проверить готовность и загрузить</button></form>{% endif %}
+</section>
+<section class="card"><h2>Как применяются данные</h2><ul><li>CRM сопоставляет записи по e-mail.</li><li>Совпавшие адреса можно пропустить или обновить данными из UniSender.</li><li>Статус e-mail переносится в карточку. Имеющиеся в CRM комментарии и метки не стираются.</li><li>Контакты, которых нет в выбранном списке UniSender, не удаляются из CRM.</li></ul></section>
+{% endblock %}
