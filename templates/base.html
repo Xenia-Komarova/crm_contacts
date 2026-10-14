@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Контакты{% endblock %} — CRM</title>
+  <style>
+    :root{--ink:#17252a;--muted:#68777b;--line:#dce5e3;--paper:#fff;--bg:#f3f7f5;--green:#176b56;--green2:#e4f2ed;--red:#a33d3d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+    header{background:#fff;border-bottom:1px solid var(--line);padding:14px max(22px,calc((100% - 1180px)/2));display:flex;align-items:center;gap:24px;position:sticky;top:0;z-index:2}
+    .brand{font-weight:750;color:var(--green);font-size:18px;text-decoration:none;margin-right:auto}nav{display:flex;gap:16px;align-items:center}nav a{color:var(--ink);text-decoration:none}nav a:hover{color:var(--green)}
+    main{max-width:1180px;margin:28px auto;padding:0 20px}.page-head{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:18px}.page-head h1{font-size:27px;margin:0}
+    .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 5px 18px #17312908}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--green);border:1px solid var(--green);color:white;border-radius:9px;padding:9px 14px;font:inherit;font-weight:650;text-decoration:none;cursor:pointer}.btn.secondary{background:white;color:var(--ink);border-color:var(--line)}.btn.danger{background:var(--red);border-color:var(--red)}.btn.small{padding:6px 10px;font-size:13px}
+    form.inline{display:inline}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.toolbar input,.toolbar select,input,select,textarea{font:inherit;border:1px solid #cbd8d4;border-radius:8px;padding:9px 11px;background:white;color:var(--ink)}.toolbar input[type=search]{min-width:250px}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}tbody tr:hover{background:#f8fbfa}.name a{font-weight:700;color:var(--ink);text-decoration:none}.muted,.help{color:var(--muted);font-size:13px}.pill{display:inline-block;background:var(--green2);color:var(--green);border-radius:20px;padding:3px 9px;font-size:12px;margin:2px}.pill.gray{background:#edf0f1;color:#58656a}.pill.red{background:#fae7e7;color:#9a3232}
+    .messages{list-style:none;padding:0}.messages li{padding:11px 14px;border-radius:8px;background:#e4f2ed;margin:8px 0}.messages li.error{background:#fae7e7;color:#8a2929}.field{margin:0 0 16px}.field label{display:block;font-weight:650;margin-bottom:5px}.field input,.field select,.field textarea{width:100%}.checks{display:flex;gap:22px;flex-wrap:wrap}.checks label{display:flex;align-items:center;gap:8px;font-weight:600}.checks input{width:auto}.errorlist{color:#a33d3d;margin:4px 0;padding-left:20px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}.grid .wide{grid-column:1/-1}.detail-grid{display:grid;grid-template-columns:170px 1fr;gap:10px 16px}.detail-grid dt{color:var(--muted)}.detail-grid dd{margin:0;white-space:pre-wrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.empty{padding:44px 20px;text-align:center;color:var(--muted)}.login{max-width:420px;margin:7vh auto}
+    @media(max-width:760px){header{flex-wrap:wrap;gap:10px}nav{width:100%;overflow:auto}.page-head{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.grid .wide{grid-column:auto}.table-wrap{overflow:auto}.detail-grid{grid-template-columns:1fr;gap:3px}.detail-grid dd{margin-bottom:10px}main{margin-top:18px}}
+  </style>
+</head>
+<body>
+<header><a class="brand" href="{% url 'contact_list' %}">База контактов</a><nav><a href="{% url 'contact_list' %}">Контакты</a><a href="{% url 'import_contacts' %}">Импорт</a><a href="/admin/">Справочники и история</a><form class="inline" method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="btn secondary small">Выйти</button></form></nav></header>
+<main>
+  {% if messages %}<ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

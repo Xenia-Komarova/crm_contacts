@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Вход{% endblock %}{% block content %}
+<section class="card login"><h1>Вход в базу контактов</h1><p class="muted">Войдите под учётной записью CRM.</p>
+<form method="post">{% csrf_token %}{{ form.non_field_errors }}<div class="field"><label for="id_username">Логин</label>{{ form.username }}{{ form.username.errors }}</div><div class="field"><label for="id_password">Пароль</label>{{ form.password }}{{ form.password.errors }}</div><button class="btn">Войти</button></form></section>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}{% if is_new %}Новый контакт{% else %}Редактирование{% endif %}{% endblock %}{% block content %}
+<div class="page-head"><h1>{% if is_new %}Новый контакт{% else %}Редактировать контакт{% endif %}</h1><a class="btn secondary" href="{% if contact.pk %}{% url 'contact_detail' contact.pk %}{% else %}{% url 'contact_list' %}{% endif %}">Назад</a></div>
+<form method="post" class="card">{% csrf_token %}{{ form.non_field_errors }}<div class="grid">
+{% for field in form %}{% if field.name == 'top_management' or field.name == 'gr' %}{% if field.name == 'top_management' %}<div class="field wide checks">{% endif %}<label>{{ field }} {{ field.label }}</label>{% if field.name == 'gr' %}</div>{% endif %}{% else %}<div class="field {% if field.name == 'comments' %}wide{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}{{ field.errors }}</div>{% endif %}{% endfor %}
+</div><div class="actions"><button class="btn">Сохранить контакт</button><a class="btn secondary" href="{% if contact.pk %}{% url 'contact_detail' contact.pk %}{% else %}{% url 'contact_list' %}{% endif %}">Отмена</a></div></form>
+{% endblock %}
